@@ -1,0 +1,106 @@
+---
+title: "P8105_hw3_my2838"
+output: github_document
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(p8105.datasets)
+
+set.seed(123)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+# Problem 1
+
+```{r}
+homicide = 
+  read_csv("homicide-data.csv") |>
+  mutate(city_state = paste(city, state, sep = ",")) |>
+  filter(!city_state %in% c("Dallas,TX", "Tulsa,AL", "Phoenix,AZ", "Kansas City,MO") ) |>
+  mutate(ifsolve = case_when(
+    disposition == "Closed by arrest" ~ TRUE,
+    disposition %in% c("Closed without arrest", "Open/No arrest") ~ FALSE
+  ),
+  victim_age = as.numeric(victim_age)) |>
+  filter(victim_race %in% c("Black", "White")) 
+```
+
+```{r}
+md_homicide = 
+  homicide |>
+  filter(city_state == "Baltimore,MD")
+
+md_glm = glm(ifsolve ~ victim_race + victim_age + victim_sex, family = binomial, data = md_homicide) 
+md_tidy = broom::tidy(md_glm)
+
+md_estimate = 
+  md_tidy |>
+  filter(term == "victim_sexMale") |>
+  pull("estimate") |>
+  exp()
+
+md_ci = 
+  confint(md_glm)["victim_sexMale",] |>
+  exp()
+
+```
+
+So the estimate proportion of homicides that are unsolved in the city of Baltimore, MD is `r md_estimate`, and the confidence interval is [`r md_ci`].
+
+```{r}
+glm_model <- function(df) {
+  glm_model = glm(ifsolve ~ victim_age + victim_sex + victim_race, family = binomial, data = df)
+  tidy_glm = broom::tidy(glm_model)
+  confint_glm = confint(glm_model)
+  
+  tidy_glm |>
+    filter(term == "victim_sexMale") %>%
+    mutate(
+      or = exp(estimate),
+      lower_ci = exp(confint_glm["victim_sexMale", "2.5 %"]),
+      upper_ci = exp(confint_glm["victim_sexMale", "97.5 %"])
+    )
+}
+
+city_models <- homicide |>
+  group_by(city_state) |>
+  nest() |>
+  mutate(model = purrr::map(data, glm_model)) |>
+  select(-data) |>
+  unnest(model)
+```
+# Problem 2
+
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
