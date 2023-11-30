@@ -104,3 +104,54 @@ weather_df =
     tmax = tmax / 10) |>
   select(name, id, everything())
 ```
+
+```{r}
+lm = lm(tmax ~ tmin + prcp, data = weather_df)
+   broom::tidy(lm)
+   broom::glance(lm)
+
+res =   
+  weather_df |> 
+  modelr::bootstrap(n = 5000) |> 
+  mutate(
+    models = map(strap, \(df) lm(tmax ~ tmin + prcp, data = df)),
+    results = map(models, broom::tidy),
+    results2 = map(models, broom::glance)) |> 
+  select(results, results2) |> 
+  unnest(results2) |> 
+  select(r.squared, results) |>
+  unnest(results) |>
+  select(term, estimate, r.squared) |>
+  group_by(term) |>
+  mutate(group_id = ceiling((row_number() ))) %>%
+  ungroup() |>
+  pivot_wider(
+    names_from = term,
+    values_from = estimate,
+  ) |>
+  mutate(log_bata = log ( tmin * abs(prcp)))
+```
+
+
+
+```{r}
+ggplot(res, aes(x = r.squared)) +
+  geom_density()+
+  labs(x = "Bootstrap R-squared)", y = "Frequency") +
+  ggtitle("Distribution of Bootstrap Estimates for r̂²")
+```
+
+The goodness of fit of a model can be measured by $\hat{r}^2$. In the observed data, estimates of $\hat{r}^2$ range from about 0.90 to 0.94. Most of the estimates hover around 0.92, indicating quite a good fit of the model. Additionally, the distribution of $\hat{r}^2$ is slightly left-skewed.
+
+```{r}
+ggplot(res, aes(x = log_bata)) +
+  geom_density()+
+  labs(x = "Bootstrap Log(Beta1*Beta2)", y = "Frequency") +
+  ggtitle("Distribution of Bootstrap Estimates for Log(Beta1*Beta2)")
+
+```
+
+The logarithm of the product of estimates, $log(\hat{\beta_1} * \hat{\beta_2})$, varied from approximately -9 to -7. A higher value in this range indicates a stronger influence of the two factors. Most values were centered around -6, implying a moderate influence. Additionally, the distribution of these values is left-skewed. (Because one of the parameters was negative, which made logarithmic transformation impossible, I first took the absolute value of $\hat{\beta_2}$.)
+
+
+
