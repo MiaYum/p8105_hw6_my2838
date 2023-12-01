@@ -8,6 +8,8 @@ library(tidyverse)
 library(ggplot2)
 library(dplyr)
 library(p8105.datasets)
+library(modelr)
+library(mgcv)
 
 set.seed(123)
 
@@ -87,9 +89,18 @@ city_models <- homicide |>
   mutate(model = purrr::map(data, glm_model)) |>
   select(-data) |>
   unnest(model)
+
+ggplot(city_models, aes(x = reorder(city_state, or), y = or)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.25) +
+  coord_flip() +  
+  xlab("City") +
+  ylab("Odds Ratio") +
+  ggtitle("Adjusted Odds Ratios with CI for Solving Homicides (Male vs Female Victims)")
 ```
 # Problem 2
 
+Firstly, I download Central Park weather data.
 
 ```{r}
 weather_df = 
@@ -104,12 +115,16 @@ weather_df =
     tmax = tmax / 10) |>
   select(name, id, everything())
 ```
+And I fitted a simple linear regression with `tmax` as the response with `tmin` and `prcp` as the predictors.
 
 ```{r}
 lm = lm(tmax ~ tmin + prcp, data = weather_df)
    broom::tidy(lm)
    broom::glance(lm)
+```
 
+
+```{r}
 res =   
   weather_df |> 
   modelr::bootstrap(n = 5000) |> 
@@ -133,7 +148,6 @@ res =
 ```
 
 
-
 ```{r}
 ggplot(res, aes(x = r.squared)) +
   geom_density()+
@@ -153,5 +167,96 @@ ggplot(res, aes(x = log_bata)) +
 
 The logarithm of the product of estimates, $log(\hat{\beta_1} * \hat{\beta_2})$, varied from approximately -9 to -7. A higher value in this range indicates a stronger influence of the two factors. Most values were centered around -6, implying a moderate influence. Additionally, the distribution of these values is left-skewed. (Because one of the parameters was negative, which made logarithmic transformation impossible, I first took the absolute value of $\hat{\beta_2}$.)
 
+# Problem 3
+
+Firstly, I load and clean the data for regression analysis. 
+
+```{r}
+birthweight = read.csv('birthweight.csv') 
+
+sum(is.na(birthweight))
+```
+
+There is no missing data. So next I converted numeric to factor where appropriate.
+
+```{r}
+vars = c('babysex', 'frace', 'malform', 'mrace')
+birthweight[vars] <- lapply(birthweight[vars], factor)
+```
+
+Based on a hypothesized structure for the factors that underly birthweight, I suggest that mother’s pre-pregnancy BMI (`ppbmi`) and weight (`ppwt`), mother’s weight gain during pregnancy (`wtgain`), as well as presence of malformations(`malform`) that could affect weight could have a deep influence to baby's birthweight.
+
+Here is my regression model.
+
+```{r}
+mymodel = lm(bwt ~ wtgain + ppwt + ppbmi + malform, data = birthweight)
+summary(mymodel)
+```
+
+Because the coefficient of `malform` is not statistically significant, I removed the varible from my model and fitted the regression model again.
+
+```{r}
+mymodel = lm(bwt ~ wtgain + ppwt + ppbmi, data = birthweight)
+summary(mymodel)
+
+birthweight_pre =
+  birthweight |>
+  add_predictions(mymodel) |>
+  add_residuals(mymodel)
+
+ggplot(birthweight_pre, aes(x = pred, y = resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  xlab("Fitted Values") +
+  ylab("Residuals") +
+  ggtitle("Residuals vs Fitted Plot")
+
+```
+
+All variables had statistically significant coefficients, which meas the mother’s pre-pregnancy BMI (`ppbmi`) and weight (`ppwt`), mother’s weight gain during pregnancy (`wtgain`) all related to the baby's birthweight.
+
+Now, let's compare my model to given models.
+
+```{r}
+model1 = lm(bwt ~ blength + gaweeks, data = birthweight)
+summary(model1)
+
+model2 = lm(bwt ~ bhead * blength * babysex, data = birthweight)
+summary(model2)
+```
+
+It can be seen that all coefficients are significant. So nwxt I fit models to training data and obtain corresponding RMSEs for the testing data, and plot the prediction error distribution for each model.
+
+```{r}
+
+cv_df =
+  crossv_mc(birthweight, 100) |> 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df |> 
+  mutate(
+    map_model0  = map(train, \(df) lm(bwt ~ wtgain + ppwt + ppbmi, data = df)),
+    map_model1  = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+    map_model2  = map(train, \(df) lm(bwt ~ bhead * blength * babysex, data = df))) |>
+  mutate(
+    rmse0 = map2_dbl(map_model0, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse1 = map2_dbl(map_model1, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse2 = map2_dbl(map_model2, test, \(mod, df) rmse(model = mod, data = df)))
+
+cv_df |> 
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() 
+```
 
 
+From the anaylsis obtained through cross-validation, it's evident that the last model performs the best as it exhibits the lowest RMSE. This is likely attributed to its consideration of variable interactions, enabling it to provide a superior fit to the data.
